@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+.DS_Store
+calib.json
+demo.mp4
+ideation/

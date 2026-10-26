@@ -1,0 +1,28 @@
+{
+ "name": "Little House",
+ "grid": [16, 16],
+ "palette": {
+  "base":   [40, 140, 60],
+  "red":    [40, 40, 200],
+  "blue":   [180, 90, 20],
+  "yellow": [30, 200, 230],
+  "white":  [235, 235, 235],
+  "black":  [40, 40, 40]
+ },
+ "steps": [
+  {"color": "white",  "at": [4, 4, 4, 2]},
+  {"color": "white",  "at": [8, 4, 4, 2]},
+  {"color": "white",  "at": [4, 10, 4, 2]},
+  {"color": "white",  "at": [8, 10, 4, 2]},
+  {"color": "white",  "at": [4, 6, 2, 4]},
+  {"color": "white",  "at": [10, 6, 2, 4]},
+  {"color": "blue",   "at": [6, 6, 2, 2]},
+  {"color": "blue",   "at": [8, 8, 2, 2]},
+  {"color": "red",    "at": [6, 8, 2, 2]},
+  {"color": "red",    "at": [8, 6, 2, 2]},
+  {"color": "black",  "at": [7, 12, 2, 1]},
+  {"color": "yellow", "at": [2, 2, 2, 2]},
+  {"color": "red",    "at": [4, 4, 4, 2]},
+  {"color": "red",    "at": [8, 10, 4, 2]}
+ ]
+}
