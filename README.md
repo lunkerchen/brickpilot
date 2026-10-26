@@ -34,8 +34,11 @@ To match your camera's colors, photograph a finished build and measure the palet
 
 `sim/render_scene.py` renders a photorealistic build of `house.json` with an overhead camera, a loose brick pile, a hand that picks and places each brick, and one deliberate mistake. It also writes the baseplate corners to `sim/calib.json`.
 
+The hand is the realistic hand from Blender Studio's [Human Base Meshes](https://www.blender.org/download/demo-files/#assets) bundle (CC0). The script rigs it automatically and poses it as a thumb-index pinch. Download and unzip the bundle first:
+
 ```bash
-blender -b -P sim/render_scene.py -- --model house.json --out sim/frames
+curl -fLO https://mirror.blender.org/demo/asset-bundles/human-base-meshes/human-base-meshes-bundle-v1.4.1.zip && unzip human-base-meshes-bundle-v1.4.1.zip
+blender -b -P sim/render_scene.py -- --model house.json --hand human-base-meshes-bundle-v1.4.1/human_base_meshes_bundle.blend --out sim/frames
 .venv/bin/python brickpilot.py measure --source sim/frames/1025.png --step 14 --calib sim/calib.json --out sim/palette.json
 .venv/bin/python brickpilot.py run --source sim/frames/%04d.png --calib sim/calib.json --palette sim/palette.json --out sim/annotated.mp4
 ```

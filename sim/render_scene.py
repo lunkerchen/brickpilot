@@ -1,6 +1,6 @@
 """用 Blender 渲染擬真的拼裝過程影格（含人手），給 BrickPilot 當合成測試畫面。
 
-blender -b -P sim/render_scene.py -- --model house.json --out sim/frames [--fast 1] [--limit N] [--start N]
+blender -b -P sim/render_scene.py -- --model house.json --hand <human_base_meshes_bundle.blend> --out sim/frames [--fast 1] [--limit N] [--start N]
 輸出：<out>/0000.png ...、<out>/../calib.json（底板四角在畫面上的像素座標）
 --fast 1 用 EEVEE 快速預覽；預設 Cycles（GPU、降噪、CC0 室內 HDRI 環境光）。
 """
@@ -161,54 +161,94 @@ scene.view_settings.view_transform = "AgX"
 scene.view_settings.look = "AgX - Medium High Contrast"
 
 
-# ---------- 人手：Skin modifier 骨架 + 次表面散射皮膚 ----------
+# ---------- 人手：Blender Studio「Human Base Meshes」寫實手部模型（CC0），自動綁骨架擺成捏取手勢 ----------
+HAND_POSE = {  # 每節繞 X 彎向掌心（度）；拇指第一節另加 Y、Z（對向食指）
+    "index": [35, 45, 25], "middle": [22, 35, 20], "ring": [28, 40, 25], "pinky": [32, 45, 30],
+}
+THUMB_POSE = [(40, -20, 0), (15, 0, 0), (0, 0, 0)]
+WRIST_TILT = math.radians(35)   # 前臂往肩膀方向抬起的角度
+
+
 def make_hand():
     """原點 = 拇指與食指捏住積木的位置；手指朝 +y，前臂往 -y 斜上離開畫面。"""
-    V, E, R = [], [], []
+    with bpy.data.libraries.load(args["--hand"]) as (_, dst):
+        dst.objects = ["Hand  - Realistic"]
+    h = dst.objects[0]
+    scene.collection.objects.link(h)
+    h.location = (0, 0, 0)
+    bpy.context.view_layer.objects.active = h
+    bpy.ops.object.modifier_apply(modifier=h.modifiers[0].name)   # 套用 Multires 細節
+    # 模型座標（公尺）：手指朝 -z、掌心朝 +y、拇指在 +x（右手）。手腕切口封面拿掉，往上擠出成前臂
+    bm = bmesh.new()
+    bm.from_mesh(h.data)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.normal.z > 0.9 and f.calc_center_median().z > 0.07], context="FACES_ONLY")
+    loop = [e for e in bm.edges if e.is_boundary]
+    for _ in range(6):
+        r = bmesh.ops.extrude_edge_only(bm, edges=loop)
+        vs = [g for g in r["geom"] if isinstance(g, bmesh.types.BMVert)]
+        c = sum((v.co for v in vs), Vector()) / len(vs)
+        for v in vs:
+            v.co = c + (v.co - c) * 1.05 + Vector((0, 0, 0.07))
+        loop = [g for g in r["geom"] if isinstance(g, bmesh.types.BMEdge) and g.is_boundary]
+    bm.to_mesh(h.data)
+    bm.free()
 
-    def chain(points, radii, start=None):
-        prev = start
-        for p, r in zip(points, radii):
-            V.append(p)
-            R.append(r)
-            i = len(V) - 1
-            if prev is not None:
-                E.append((prev, i))
-            prev = i
-        return prev
+    rig = bpy.data.objects.new("rig", bpy.data.armatures.new("rig"))
+    scene.collection.objects.link(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = rig.data.edit_bones
 
-    # 右手掌心朝下、手指朝 +y、拇指在 -x 側；1 單位 = 8 mm，手掌寬約 85 mm
-    elbow = chain([(1.0, -70, 55), (1.2, -40, 27)], [(4.3, 4.0), (3.9, 3.4)])
-    wrist = chain([(1.6, -15.5, 7.2)], [(3.3, 2.1)], elbow)
-    fingers = [  # (指根, 第二關節, 第三關節, 指尖), 半徑；食指與拇指捏住積木，其餘手指往掌心彎
-        ([(-1.3, -5.2, 6.0), (-1.1, -1.8, 6.1), (-0.6, 0.4, 4.3), (0.0, 1.3, 2.0)], 0.98),
-        ([(0.9, -4.8, 6.3), (1.3, -1.4, 6.2), (1.6, 0.3, 4.2), (1.5, -1.0, 2.7)], 1.0),
-        ([(3.0, -5.1, 6.0), (3.5, -2.1, 5.8), (3.8, -0.8, 3.9), (3.6, -2.0, 2.7)], 0.93),
-        ([(4.9, -5.9, 5.5), (5.4, -3.6, 5.2), (5.6, -2.5, 3.6), (5.3, -3.5, 2.7)], 0.8),
-        ([(-1.6, -12.0, 5.6), (-3.6, -7.4, 4.2), (-2.6, -3.6, 2.6), (-0.6, -1.4, 1.5)], 1.12),
-    ]
-    tips = []
-    for pts, r in fingers:
-        # 掌骨（手腕 → 指根）粗而扁，彼此重疊成手背；每節之間插中點，讓關節分段自然
-        meta = tuple(w + (k - w) * 0.5 for w, k in zip(V[wrist], pts[0]))
-        knuckle = chain([meta, pts[0]], [(r * 1.45, r * 0.9), (r * 1.25, r * 0.95)], wrist)
-        seg = []
-        for k in range(3):
-            seg += [tuple((x + y) / 2 for x, y in zip(pts[k], pts[k + 1])), pts[k + 1]]
-        radii = [(r, r * 0.92), (r * 0.98, r * 0.9), (r * 0.94, r * 0.86), (r * 0.9, r * 0.82), (r * 0.86, r * 0.78), (r * 0.74, r * 0.66)]
-        tip = chain(seg, radii, knuckle)
-        tips.append((V[tip], V[tip - 1], r))
-    me = bpy.data.meshes.new("hand")
-    me.from_pydata(V, E, [])
-    obj = bpy.data.objects.new("hand", me)
-    scene.collection.objects.link(obj)
-    obj.modifiers.new("skin", "SKIN")
-    for i, r in enumerate(R):
-        obj.data.skin_vertices[0].data[i].radius = r
-    obj.data.skin_vertices[0].data[0].use_root = True
-    sub = obj.modifiers.new("sub", "SUBSURF")
-    sub.levels = sub.render_levels = 3
-    for p in me.polygons:
+    def bone(name, a, b, parent=None):
+        x = eb.new(name)
+        x.head, x.tail = Vector(a), Vector(b)
+        x.align_roll(Vector((0, 1, 0)))   # 骨頭 Z 軸朝掌心：繞 X 轉 = 手指彎曲
+        if parent:
+            x.parent = eb[parent]
+
+    bone("forearm", (0.005, -0.004, 0.5), (0.005, -0.004, 0.0))
+    bone("palm", (0.005, -0.004, 0.0), (0.019, 0.004, -0.083), "forearm")
+    fingers = {  # 指根關節 → 指尖（從模型頂點量得）
+        "index": ((0.046, 0.003, -0.082), (0.0539, 0.0126, -0.1893)), "middle": ((0.019, 0.004, -0.085), (0.0183, 0.0138, -0.2047)),
+        "ring": ((-0.011, 0.004, -0.083), (-0.0115, 0.0206, -0.1938)), "pinky": ((-0.040, 0.006, -0.078), (-0.0533, 0.0206, -0.1657)),
+    }
+    for f, (a, t) in fingers.items():
+        a, t = Vector(a), Vector(t)
+        pip, dip = a.lerp(t, 0.47), a.lerp(t, 0.76)
+        bone(f + "1", a, pip, "palm")
+        bone(f + "2", pip, dip, f + "1")
+        bone(f + "3", dip, t, f + "2")
+    bone("thumb1", (0.030, 0.008, -0.020), (0.066, 0.017, -0.066), "palm")
+    bone("thumb2", (0.066, 0.017, -0.066), (0.080, 0.021, -0.090), "thumb1")
+    bone("thumb3", (0.080, 0.021, -0.090), (0.090, 0.022, -0.114), "thumb2")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for o in scene.objects:
+        o.select_set(False)
+    h.select_set(True)
+    rig.select_set(True)
+    bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+
+    for f, angles in HAND_POSE.items():
+        for i, a in enumerate(angles):
+            rig.pose.bones[f"{f}{i + 1}"].rotation_mode = "XYZ"
+            rig.pose.bones[f"{f}{i + 1}"].rotation_euler = (math.radians(a), 0, 0)
+    for i, rot in enumerate(THUMB_POSE):
+        rig.pose.bones[f"thumb{i + 1}"].rotation_mode = "XYZ"
+        rig.pose.bones[f"thumb{i + 1}"].rotation_euler = [math.radians(a) for a in rot]
+    bpy.context.view_layer.update()
+    pinch = (rig.pose.bones["index3"].tail + rig.pose.bones["thumb3"].tail) / 2
+    # 姿勢定型：套用骨架變形後刪掉骨架
+    bpy.context.view_layer.objects.active = h
+    h.parent = None
+    bpy.ops.object.modifier_apply(modifier=h.modifiers[-1].name)
+    bpy.data.objects.remove(rig)
+    # 轉到場景座標（1 單位 = 8 mm）：掌心朝下、手指朝 +y、前臂往 -y 抬起；原點在捏取點上方一點（積木中段高度）
+    to_scene = Matrix.Rotation(-WRIST_TILT, 4, "X") @ Matrix(((-1, 0, 0, 0), (0, 0, -1, 0), (0, -1, 0, 0), (0, 0, 0, 1))) @ Matrix.Scale(110, 4)   # 模型是偏大的男性手，縮到約 18 cm 長的一般成人手
+    h.data.transform(Matrix.Translation((0, 0, BRICK_H * 0.6)) @ to_scene @ Matrix.Translation(-pinch))
+    h.vertex_groups.clear()
+    sub = h.modifiers.new("sub", "SUBSURF")
+    sub.levels = sub.render_levels = 1
+    for p in h.data.polygons:
         p.use_smooth = True
     skin, sp = principled("skin", (0.62, 0.36, 0.25), 0.45, bump=0.05)
     snt = skin.node_tree
@@ -218,31 +258,30 @@ def make_hand():
     tone.color_ramp.elements[0].color = (0.52, 0.28, 0.19, 1)
     tone.color_ramp.elements[1].color = (0.66, 0.4, 0.29, 1)
     snt.links.new(blotch.outputs["Fac"], tone.inputs["Fac"])
-    snt.links.new(tone.outputs["Color"], sp.inputs["Base Color"])
+    ao = snt.nodes.new("ShaderNodeAmbientOcclusion")   # 指縫、指節皺褶變暗，補回立體感
+    ao.inputs["Distance"].default_value = 0.6
+    shade = snt.nodes.new("ShaderNodeMapRange")
+    shade.inputs["To Min"].default_value = 0.6
+    snt.links.new(ao.outputs["AO"], shade.inputs["Value"])
+    mul = snt.nodes.new("ShaderNodeMix")
+    mul.data_type, mul.blend_type = "RGBA", "MULTIPLY"
+    mul.inputs["Factor"].default_value = 1
+    snt.links.new(tone.outputs["Color"], mul.inputs["A"])
+    snt.links.new(shade.outputs["Result"], mul.inputs["B"])
+    snt.links.new(mul.outputs["Result"], sp.inputs["Base Color"])
+    pores = snt.nodes.new("ShaderNodeTexVoronoi")      # 毛孔
+    pores.inputs["Scale"].default_value = 90
+    pb = snt.nodes.new("ShaderNodeBump")
+    pb.inputs["Strength"].default_value = 0.12
+    pb.inputs["Distance"].default_value = 0.02
+    snt.links.new(pores.outputs["Distance"], pb.inputs["Height"])
+    snt.links.new(pb.outputs["Normal"], sp.inputs["Normal"])
     sp.inputs["Subsurface Weight"].default_value = 0.3
     sp.inputs["Subsurface Radius"].default_value = (1.0, 0.35, 0.2)
     sp.inputs["Subsurface Scale"].default_value = 0.4
-    obj.data.materials.append(skin)
-    # 手背：一塊扁平橢球蓋住掌骨，讓手背連成一片（ponytail: 與手指是分開的網格，近看接縫略可見）
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=1)
-    back = bpy.context.active_object
-    back.scale = (4.1, 5.6, 1.7)
-    back.location = (1.7, -9.6, 5.9)
-    back.rotation_euler = (0.32, 0, -0.06)
-    bpy.ops.object.shade_smooth()
-    back.data.materials.append(skin)
-    back.parent = obj
-    nail_mat, _ = principled("nail", (0.7, 0.45, 0.4), 0.25)
-    for tip, prev, r in tips:   # 指甲：貼在指尖背面的扁平橢球
-        tip, prev = Vector(tip), Vector(prev)
-        bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8, radius=1)
-        nail = bpy.context.active_object
-        nail.scale = (r * 0.62, r * 0.75, 0.18)
-        nail.location = tip.lerp(prev, 0.35) + Vector((0, 0, r * 0.78))
-        nail.rotation_euler = (math.atan2(tip.z - prev.z, (tip - prev).xy.length) * -1, 0, 0)
-        nail.data.materials.append(nail_mat)
-        nail.parent = obj
-    return obj
+    h.data.materials.clear()
+    h.data.materials.append(skin)
+    return h
 
 
 hand = make_hand()
