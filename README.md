@@ -24,6 +24,24 @@ uv venv .venv && uv pip install --python .venv/bin/python opencv-python numpy
 
 `--max-dist` sets how far a color can be from the palette before it counts as unknown. Tune it for your lighting. Press `r` to recalibrate and `q` to quit.
 
+To match your camera's colors, photograph a finished build and measure the palette, then pass it with `--palette`:
+
+```bash
+.venv/bin/python brickpilot.py measure --source done.png --step 14 --out palette.json
+```
+
+## Simulated footage (Blender)
+
+`sim/render_scene.py` renders a photorealistic build of `house.json` with an overhead camera, a loose brick pile and one deliberate mistake. It also writes the baseplate corners to `sim/calib.json`.
+
+```bash
+blender -b -P sim/render_scene.py -- --model house.json --out sim/frames
+.venv/bin/python brickpilot.py measure --source sim/frames/0606.png --step 14 --calib sim/calib.json --out sim/palette.json
+.venv/bin/python brickpilot.py run --source sim/frames/%04d.png --calib sim/calib.json --palette sim/palette.json --out sim/annotated.mp4
+```
+
+The setup assumes an overhead camera and a top light (ring light), which keeps shadows and stacking parallax small.
+
 ## Instruction format
 
 `house.json` lists the grid size, the palette (BGR) and the steps. Each step is a brick color and its `[x, y, width, height]` in studs. Every step must change the top view.

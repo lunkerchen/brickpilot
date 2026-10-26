@@ -4,3 +4,7 @@ __pycache__/
 calib.json
 demo.mp4
 ideation/
+sim/frames/
+sim/*.mp4
+sim/calib.json
+sim/palette.json

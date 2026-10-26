@@ -2,6 +2,7 @@
 
 python brickpilot.py demo --model house.json --out demo.mp4   # 合成測試影片
 python brickpilot.py run  --model house.json --source 0       # 網路攝影機（或影片路徑）
+python brickpilot.py measure --source done.png --step 14 --out palette.json  # 量實際看到的顏色
 """
 import argparse
 import json
@@ -14,12 +15,16 @@ import numpy as np
 CELL = 24          # 校正後每顆凸點的像素數
 STABLE = 5         # 觀測連續一致幾幀才採用（濾掉手的移動）
 UNKNOWN = "?"      # 顏色離調色盤太遠（手、陰影）的格子，不參與判斷
+MAX_DIST = 25      # 預設顏色容許距離；實拍燈光不同時用 --max-dist 調
+LAB_W = np.array([0.5, 1, 1])  # 亮度權重減半：陰影只讓顏色變暗，不該把綠底板判成黑色
 
 
-def load_model(path):
+def load_model(path, palette_path=None):
     m = json.load(open(path))
+    # 鏡頭看到的顏色會受燈光影響，用 measure 量出的 palette 檔取代說明書的標準色
+    seen = json.load(open(palette_path)) if palette_path else m["palette"]
     m["lab"] = {k: cv2.cvtColor(np.uint8([[v]]), cv2.COLOR_BGR2LAB)[0, 0].astype(float)
-                for k, v in m["palette"].items()}
+                for k, v in seen.items()}
     m["states"] = expected_states(m)
     return m
 
@@ -53,11 +58,11 @@ def observe(frame, H, m, max_dist):
     names = list(m["lab"])
     refs = np.array([m["lab"][n] for n in names])
     obs = np.empty((h, w), dtype=object)
-    p = CELL // 5
+    p = int(CELL * 0.3)   # 只取格子中央，疊高積木的視差偏移不會滲進來
     for y in range(h):
         for x in range(w):
             c = np.median(lab[y * CELL + p:(y + 1) * CELL - p, x * CELL + p:(x + 1) * CELL - p].reshape(-1, 3), 0)
-            d = np.linalg.norm(refs - c, axis=1)
+            d = np.linalg.norm((refs - c) * LAB_W, axis=1)
             obs[y, x] = names[d.argmin()] if d.min() <= max_dist else UNKNOWN
     return obs
 
@@ -209,8 +214,25 @@ def calibrate(cap):
     return pts
 
 
-def run(m, source, max_dist, voice, calib_path="calib.json"):
+def measure(m, source, step, calib_path, out):
+    """拍一張已知進度（第 step 步完成）的畫面，量出每種顏色實際看起來的 BGR。"""
+    frame = cv2.imread(source)
+    w, h = m["grid"]
+    top = cv2.warpPerspective(frame, rectify_matrix(json.load(open(calib_path)), m["grid"]), (w * CELL, h * CELL))
+    p, state, samples = CELL // 5, m["states"][step], {}
+    for y in range(h):
+        for x in range(w):
+            samples.setdefault(state[y, x], []).append(
+                np.median(top[y * CELL + p:(y + 1) * CELL - p, x * CELL + p:(x + 1) * CELL - p].reshape(-1, 3), 0))
+    palette = {k: [int(v) for v in np.median(samples.get(k, [m["palette"][k]]), 0)] for k in m["palette"]}
+    json.dump(palette, open(out, "w"), indent=1)
+    print(palette)
+
+
+def run(m, source, max_dist, voice, calib_path="calib.json", out=None):
+    """out 有值時不開視窗，把標註後的畫面寫成影片（批次處理錄好的影片或影格）。"""
     cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
+    vw = None
     try:
         corners = json.load(open(calib_path))
     except FileNotFoundError:
@@ -223,6 +245,11 @@ def run(m, source, max_dist, voice, calib_path="calib.json"):
         if not ok:
             break
         msg = t.update(frame, H)
+        if out:
+            vw = vw or cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*"mp4v"), cap.get(cv2.CAP_PROP_FPS) or 24,
+                                       (frame.shape[1], frame.shape[0]))
+            vw.write(draw(frame, H, m, t.k, t.wrong, msg, "SIMULATED FOOTAGE (Blender)"))
+            continue
         if voice and msg != spoken and sys.platform == "darwin":
             subprocess.Popen(["say", msg])
             spoken = msg
@@ -232,17 +259,28 @@ def run(m, source, max_dist, voice, calib_path="calib.json"):
             break
         if key == ord("r"):                      # 重新校正
             H = rectify_matrix(calibrate(cap), m["grid"])
+    if vw:
+        vw.release()
+        print(f"wrote {out}; final step {t.k}/{len(m['steps'])}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["demo", "run"])
+    ap.add_argument("mode", choices=["demo", "run", "measure"])
     ap.add_argument("--model", default="house.json")
-    ap.add_argument("--out", default="demo.mp4")
+    ap.add_argument("--out", help="demo/run: output video; measure: palette json")
+    ap.add_argument("--calib", default="calib.json", help="baseplate corners TL, TR, BR, BL in pixels")
+    ap.add_argument("--palette", help="measured colors from the measure mode")
+    ap.add_argument("--step", type=int, help="measure: which step is complete in the image")
     ap.add_argument("--source", default="0", help="camera index or video path")
     # 實拍時燈光不同要調這個：太小會把積木當成手，太大會把手當成積木
-    ap.add_argument("--max-dist", type=float, default=40)
+    ap.add_argument("--max-dist", type=float, default=MAX_DIST)
     ap.add_argument("--voice", action="store_true", help="speak instructions (macOS say)")
     a = ap.parse_args()
-    model = load_model(a.model)
-    demo(model, a.out, a.max_dist) if a.mode == "demo" else run(model, a.source, a.max_dist, a.voice)
+    model = load_model(a.model, a.palette)
+    if a.mode == "demo":
+        demo(model, a.out or "demo.mp4", a.max_dist)
+    elif a.mode == "measure":
+        measure(model, a.source, a.step, a.calib, a.out or "palette.json")
+    else:
+        run(model, a.source, a.max_dist, a.voice, a.calib, a.out)
