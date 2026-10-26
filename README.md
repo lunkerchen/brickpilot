@@ -45,6 +45,14 @@ blender -b -P sim/render_scene.py -- --model house.json --hand human-base-meshes
 
 The setup assumes an overhead camera and a top light (ring light), which keeps shadows and stacking parallax small. Skin is ignored by its a* (redness) range, so a hand over the board is never read as a white or yellow brick.
 
+## Demo video
+
+`video/make_demo.py` cuts the annotated footage, title cards and an English voiceover (macOS `say`) into a demo of about 2.5 minutes, with burned-in captions and a separate `.srt` for YouTube.
+
+```bash
+python3 video/make_demo.py --clip sim/annotated.mp4 --out video/brickpilot_demo.mp4
+```
+
 ## Instruction format
 
 `house.json` lists the grid size, the palette (BGR) and the steps. Each step is a brick color and its `[x, y, width, height]` in studs. Every step must change the top view.

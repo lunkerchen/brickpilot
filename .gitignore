@@ -9,3 +9,5 @@ sim/*.mp4
 sim/calib.json
 sim/palette.json
 human-base-meshes-bundle-*
+video/*.mp4
+video/*.srt
