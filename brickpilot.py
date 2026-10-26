@@ -16,7 +16,8 @@ CELL = 24          # 校正後每顆凸點的像素數
 STABLE = 5         # 觀測連續一致幾幀才採用（濾掉手的移動）
 UNKNOWN = "?"      # 顏色離調色盤太遠（手、陰影）的格子，不參與判斷
 MAX_DIST = 25      # 預設顏色容許距離；實拍燈光不同時用 --max-dist 調
-LAB_W = np.array([0.5, 1, 1])  # 亮度權重減半：陰影只讓顏色變暗，不該把綠底板判成黑色
+LAB_W = np.array([0.5, 1, 1])
+SKIN_A = (132, 165)  # 膚色的 a* 範圍（OpenCV 8-bit Lab）  # 亮度權重減半：陰影只讓顏色變暗，不該把綠底板判成黑色
 
 
 def load_model(path, palette_path=None):
@@ -58,12 +59,18 @@ def observe(frame, H, m, max_dist):
     names = list(m["lab"])
     refs = np.array([m["lab"][n] for n in names])
     obs = np.empty((h, w), dtype=object)
+    skin = np.zeros((h, w), bool)
     p = int(CELL * 0.3)   # 只取格子中央，疊高積木的視差偏移不會滲進來
     for y in range(h):
         for x in range(w):
             c = np.median(lab[y * CELL + p:(y + 1) * CELL - p, x * CELL + p:(x + 1) * CELL - p].reshape(-1, 3), 0)
             d = np.linalg.norm((refs - c) * LAB_W, axis=1)
+            # 膚色偏紅（OpenCV a* 約 132–165），白、黃、黑積木都在 128 左右、紅積木 175 以上：當成手，不判斷
+            # ponytail: 固定門檻；遇到橘色、膚色系積木時改成依 palette 動態算
+            skin[y, x] = SKIN_A[0] <= c[1] <= SKIN_A[1] and c[2] > 132
             obs[y, x] = names[d.argmin()] if d.min() <= max_dist else UNKNOWN
+    # 手的邊緣會和底板混色，看起來像黃、白積木：膚色格子連同周圍一圈都不判斷
+    obs[cv2.dilate(skin.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0] = UNKNOWN
     return obs
 
 

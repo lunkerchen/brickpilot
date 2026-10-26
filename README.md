@@ -32,15 +32,15 @@ To match your camera's colors, photograph a finished build and measure the palet
 
 ## Simulated footage (Blender)
 
-`sim/render_scene.py` renders a photorealistic build of `house.json` with an overhead camera, a loose brick pile and one deliberate mistake. It also writes the baseplate corners to `sim/calib.json`.
+`sim/render_scene.py` renders a photorealistic build of `house.json` with an overhead camera, a loose brick pile, a hand that picks and places each brick, and one deliberate mistake. It also writes the baseplate corners to `sim/calib.json`.
 
 ```bash
 blender -b -P sim/render_scene.py -- --model house.json --out sim/frames
-.venv/bin/python brickpilot.py measure --source sim/frames/0606.png --step 14 --calib sim/calib.json --out sim/palette.json
+.venv/bin/python brickpilot.py measure --source sim/frames/1025.png --step 14 --calib sim/calib.json --out sim/palette.json
 .venv/bin/python brickpilot.py run --source sim/frames/%04d.png --calib sim/calib.json --palette sim/palette.json --out sim/annotated.mp4
 ```
 
-The setup assumes an overhead camera and a top light (ring light), which keeps shadows and stacking parallax small.
+The setup assumes an overhead camera and a top light (ring light), which keeps shadows and stacking parallax small. Skin is ignored by its a* (redness) range, so a hand over the board is never read as a white or yellow brick.
 
 ## Instruction format
 

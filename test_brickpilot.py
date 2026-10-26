@@ -27,6 +27,10 @@ obs = bp.observe(bp.render(m["states"][4], m, rng, hand=(450, 330)), H, m, bp.MA
 assert (obs == bp.UNKNOWN).any()
 assert bp.locate(obs, m["states"], 4)[0] == 4
 
+# 偏白的膚色（Blender 渲染實測值）不能被當成白色或黃色積木
+skin = np.full_like(bp.render(m["states"][0], m, rng), (185, 200, 227))
+assert (bp.observe(skin, H, m, bp.MAX_DIST) == bp.UNKNOWN).all()
+
 # 整支 demo 跑完要停在最後一步
 t = bp.Tracker(m, bp.MAX_DIST)
 for state, hand in bp.demo_script(m):
