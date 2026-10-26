@@ -1,7 +1,7 @@
 """把模擬畫面、字卡與英文旁白剪成約 3 分鐘的比賽 demo 影片（macOS say + ffmpeg）。
 
-python3 video/make_demo.py --clip sim/annotated.mp4 --out video/brickpilot_demo.mp4 [--voice Samantha]
-每段的長度跟著旁白走；影片段落會加速或停格去配合旁白長度。
+python3 video/make_demo.py --clip sim/annotated.mp4 --out video/brickpilot_demo.mp4 [--voice en-US-AndrewNeural | --tts say --voice Samantha]
+旁白預設用 edge-tts 神經網路語音；每段的長度跟著旁白走；影片段落會加速或停格去配合旁白長度。
 """
 import argparse
 import json
@@ -79,6 +79,23 @@ def duration(path):
     return float(out)
 
 
+def narrate(text, path, args):
+    """預設用 edge-tts 的神經網路語音（需連網）；--tts say 改用 macOS 內建語音（離線）。"""
+    if args.tts == "say":
+        aiff = path.with_suffix(".aiff")
+        sh("say", "-v", args.voice, "-r", str(args.rate), "-o", str(aiff), text)
+        sh("ffmpeg", "-y", "-i", str(aiff), str(path))
+        return
+    for attempt in range(3):
+        try:
+            subprocess.run(["uvx", "--from", "edge-tts", "edge-tts", "--voice", args.voice, "--rate", args.edge_rate, "--text", text, "--write-media", str(path)],
+                           check=True, capture_output=True, timeout=120)
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if attempt == 2:
+                raise
+
+
 def text_filters(lines, tmp, i):
     """第一行是標題，其餘是條列；每行寫成檔案再給 drawtext，避免跳脫字元問題。"""
     fs = []
@@ -93,8 +110,8 @@ def text_filters(lines, tmp, i):
 
 
 def build_segment(i, seg, args, tmp):
-    voice = tmp / f"v{i}.aiff"
-    sh("say", "-v", args.voice, "-r", str(args.rate), "-o", str(voice), spoken(seg["say"]))
+    voice = tmp / f"v{i}.mp3"
+    narrate(spoken(seg["say"]), voice, args)
     length = duration(voice) + 0.8
     out = tmp / f"s{i}.mp4"
     audio = ["-i", str(voice)]
@@ -147,7 +164,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", default="sim/annotated.mp4")
     ap.add_argument("--out", default="video/brickpilot_demo.mp4")
-    ap.add_argument("--voice", default="Samantha")
+    ap.add_argument("--tts", choices=["edge", "say"], default="edge")
+    ap.add_argument("--voice", default="en-US-AndrewNeural", help="edge-tts voice, or a macOS voice with --tts say")
+    ap.add_argument("--edge-rate", default="+0%")
     ap.add_argument("--sfx-voice", default="Daniel")
     ap.add_argument("--rate", type=int, default=172, help="words per minute")
     args = ap.parse_args()
@@ -160,7 +179,7 @@ def main():
         style = "FontName=Avenir Next,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,MarginV=24"
         sh("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(tmp / "list.txt"),
            "-vf", f"subtitles='{srt}':force_style='{style}'", "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-movflags", "+faststart", args.out)
+           "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-c:a", "aac", "-ar", "48000", "-movflags", "+faststart", args.out)
     print(json.dumps({"out": args.out, "seconds": round(duration(args.out), 1), "captions": str(srt)}))
 
 
