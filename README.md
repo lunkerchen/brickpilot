@@ -1,5 +1,7 @@
 # BrickPilot (Stage I prototype)
 
+**Demo video (2.5 min):** https://youtu.be/iHUNZwdZVLE
+
 Real-time build guidance for LEGO®-compatible interlocking bricks. A top-down camera watches a baseplate, tracks which instruction step the builder is on, highlights where the next brick goes, and flags a wrong brick the moment it is placed.
 
 Entry for the ASUS UGen AI League hackathon, Battlefield Lightning (ASUS UGen300 / Hailo-10H). LEGO® is a trademark of the LEGO Group, which does not sponsor or endorse this project.
